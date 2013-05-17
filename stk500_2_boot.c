@@ -313,6 +313,9 @@ const char str1[]="STK500_2";
 #define CS_LCD		{ENLCD_PORT |= (1<<ENLCD_PIN);}	// ENLCD защелка ЖКИ
 #define CS_OFF		{ENLCD_PORT &= ~(1<<ENLCD_PIN);}// отключение всех CS
 
+#define CS_MEM		{PORTC &= 0x1F; PORTC |= 0x80;}
+#define L_FL_BUSY	(PINE & 0x40)
+
 #define LATCH_LCD	{CS_LCD;	delay_5ms(); CS_OFF;}
 #define K_LCD		{RSLCD_PORT &= ~(1<<RSLCD_PIN);}// RSLCD
 #define D_LCD		{RSLCD_PORT |=  (1<<RSLCD_PIN);}// RSLCD
@@ -354,6 +357,8 @@ static inline void FLOUTEK_WatchDog(void){
 //#define BREAK_COUNTS 61440
 //100ms
 #define BREAK_COUNTS (0.1*F_CPU/6)
+
+unsigned char at45db161_read_byte(unsigned long address);
 
 int main(void)
 {
@@ -833,7 +838,9 @@ static inline void cmdReadFlashIsp(void) {
 	//====
 	for(i=0;i < n_bytes; i++) { // fill data buffer with n_bytes
 #if defined(__AVR_ATmega128__) || defined(__AVR_AT90CAN128__)
-    	*(tx_pntr++) = (address_flash<BOOTLOADER_BASE)?(pgm_read_byte_far(address_flash++)):(0xFF);
+//    	*(tx_pntr++) = (address_flash<BOOTLOADER_BASE)?(pgm_read_byte_far(address_flash++)):(0xFF);
+//Это обман
+    	*(tx_pntr++) = (address_flash<BOOTLOADER_BASE)?(at45db161_read_byte(address_flash++)):(0xFF);
 #else
     	*(tx_pntr++) = pgm_read_byte(address_flash++);
 #endif    	
@@ -1662,3 +1669,23 @@ static inline void x_delay_loop_2(uint16_t __count)
 	);
 }
 /**/
+
+unsigned char at45db161_read_byte(unsigned long address){
+union abc{
+	unsigned long l;
+	unsigned char c[sizeof(long)];
+} l;
+unsigned char rez;
+
+	l.l=address;	
+
+	while(!L_FL_BUSY);
+	CS_MEM; while(!L_FL_BUSY);
+	SPI_Transmit(0xD2); SPI_Transmit(l.c[2]); SPI_Transmit(l.c[1]); SPI_Transmit(l.c[0]);
+        SPI_Transmit(0x00);SPI_Transmit(0x00);SPI_Transmit(0x00);SPI_Transmit(0x00);
+
+	SPI_Transmit(0x00);rez=SPDR;
+
+	CS_OFF;
+	return rez;
+}
