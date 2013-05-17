@@ -17,12 +17,21 @@
 **	(c) Jason P. Kyle, avr1.org
 **
 **************************************************************************/
+#define TARGET_PCB MEGAS
+
+#ifndef TARGET_PCB
+#error TARGET_PCB not defined
+#endif
+
 #include <ctype.h>
 #include <avr/io.h>
 #include <avr/boot.h>
 #include <avr/pgmspace.h>
 #include <stdlib.h>
-#include <util/delay.h>
+#include <string.h>
+static inline void x_delay_loop_2(uint16_t __count);
+#define delay_5ms() x_delay_loop_2(4609)
+#define delay_50ms() x_delay_loop_2(46090)
 
 #include "command_v2.h"
 //#include "xtea.h"
@@ -57,9 +66,10 @@ static void XTEA_encode_special_(unsigned long* data, unsigned char dataLength);
 
 /* Set values as required supress popup messages in AVR-Studio */
 #define HARDWARE_VERSION      0x02
-#define SOFTWARE_MAJOR        0x02
+//#define SOFTWARE_MAJOR        0x02
+#define SOFTWARE_MAJOR        0x77
 //#define SOFTWARE_MINOR        0x01
-#define SOFTWARE_MINOR        0x0A
+#define SOFTWARE_MINOR        0x33
 
 /* values for possible topcard */
 #define STK501		0xAA
@@ -69,13 +79,29 @@ static void XTEA_encode_special_(unsigned long* data, unsigned char dataLength);
 #define STK505		0xE4
 #define STK520		0xDD		
 
+#if TARGET_PCB == MEGAS
+#define F_CPU 3686400UL
+/* value for vtarget: always return 3.0V */
+#define VTARGET		0x23
+/* value for vadjust: always return 3.0V */
+#define VADJUST		0x23
+#elif  TARGET_PCB == MEMEX
+#define F_CPU 7372800UL
 /* value for vtarget: always return 5.0V */
 #define VTARGET		0x32
 /* value for vadjust: always return 5.0V */
 #define VADJUST		0x32
+#endif
+
 /* prescalled clock frequesncy equal to system clock */
 #define PSCALE_FSYS 0x01
+
+#if TARGET_PCB == MEGAS
+#define CMATCH_DEF	0x00
+#elif  TARGET_PCB == MEMEX
 #define CMATCH_DEF	0x01
+#endif
+
 #define SCK_DURATION_DEF 0x01
 
 #define BAUD_RATE		115200
@@ -152,11 +178,13 @@ static void XTEA_encode_special_(unsigned long* data, unsigned char dataLength);
 
 static void putch(char);
 static char getch(void);
-static void initPorts(void); // init port pins for bootloader start
-static void initUart(void);  // check uart selected and init
-static inline void bootCheck(void); // check bootloader/application start
+static inline void init_ports(void); // init port pins for bootloader start
+static inline void initUart(void);  // check uart selected and init
+#ifdef _NEED_BOOT_CHECK
+static void bootCheck(void); // check bootloader/application start
+#endif
 void handleMessage(void) ; 
-static void sendResponse(void);
+static inline void sendResponse(void);
 static inline void cmdSignOn(void);
 static inline void cmdReadSignatureIsp(void);
 static inline void cmdSetParameter(void);
@@ -171,9 +199,10 @@ static inline void cmdProgramEepromIsp(void);
 static inline void cmdReadEepromIsp(void);
 static inline void cmdReadFuseLockIsp(void);
 static inline void cmdError(void);
+
 static void eeprom_wb(unsigned int uiAddress, unsigned char ucData);
-static unsigned char eeprom_rb(unsigned int uiAddress);
-static unsigned char readBits( unsigned int address ); // read lock/fuse bits
+unsigned char eeprom_rb(unsigned int uiAddress);
+static inline unsigned char readBits( unsigned int address ); // read lock/fuse bits
 
 #ifdef MONITOR	
 #define MONITOR_FLAG '!' 
@@ -193,11 +222,11 @@ static unsigned char readBits( unsigned int address ); // read lock/fuse bits
 #define MONITOR_MEM_RAM    1
 #define MONITOR_MEM_EEPROM 2
 
-	void monitorMain(void); 
+ 	void monitorMain(void); 
 	void monitorInit(void);
 	uint32_t monitorDump( uint32_t address, uint8_t lineNum, uint8_t memType );
 	void monitorChange( uint32_t address, uint8_t value, uint8_t memType );
-	void print( char *s );
+ 	void print( char *s );
 	void print_P( uint32_t address );
 	char  *monitorReadLine( void );
 	char *getValue( char *src,  uint32_t *value, uint8_t len );
@@ -230,35 +259,80 @@ unsigned char n_pages = 0x00;  // number of page to program
 unsigned char sequence_number=0x00;  // sequence number from host
 unsigned char answer_id=0x00;  // answer cmd id
 unsigned int i=0, j=0;  // for loop variables
-#ifdef MONITOR
-unsigned char echo = 0;  // rs232 terminal echo 
-#endif
+unsigned char echo = 0;  // rs232 terminal echo
 
 
+//unsigned long key[9];//={1,2,3,4};
+typedef struct {
+	unsigned long key[4];
+	unsigned char desc_str[8];
+	unsigned char major;	
+	unsigned char minor;	
+}KEY_RECORD ;
 
-static unsigned long key[4]={1,2,3,4};
+KEY_RECORD key_record;
+const KEY_RECORD key_record_default = {{1,2,3,4},"default ",0x02,0x0a};
+
 static inline void key_load(void);
+
+static void init_spi(void);
+static void init_gki(void);
+//void waitl(unsigned long a);
+void vyv_str(const char strok[], char pos);
+static void SPI_Transmit(unsigned char data);
+
+const char str1[]="STK500_2";
+//const char key_default[36]={0x01,0x00,0x00,0x00,0x02,0x00,0x00,0x00,0x02,0x00,0x00,0x00,0x04,0x00,0x00,0x00,"default DEFAULT ",0x02,0x0a,0xFF,0xFF};
 
 // pins for MEMEX4 board
 #define PROG_PORT  PORTE
 #define PROG_DDR   DDRE
 #define PROG_IN    PINE
-#define PROG_PIN   PINE2
+//#define PROG_PIN   PINE2
+#define PROG_PIN   PINE0
+
+//DSR06 Megas input pin
+#define DSR_DDR  DDRE
+#define DSR_PORT PORTE
+#define DSR_IN   PINE
+#define DSR_PIN  PINE3
+
+//LCD Megas output pin
+//=============
+#define RSLCD_DDR	DDRC
+#define RSLCD_PORT	PORTC
+#define RSLCD_PIN	PINC3
+
+#define ENLCD_DDR	DDRC
+#define ENLCD_PORT	PORTC
+#define ENLCD_PIN	PINC4
+
+#define TIME_LCD	100	// пауза на waitl(long int) после данных в ЖКИ
+#define TIME_INI_LCD	1000	// пауза на waitl(long int) перед инициализацией ЖКИ
+
+#define CS_LCD		{ENLCD_PORT |= (1<<ENLCD_PIN);}	// ENLCD защелка ЖКИ
+#define CS_OFF		{ENLCD_PORT &= ~(1<<ENLCD_PIN);}// отключение всех CS
+
+#define LATCH_LCD	{CS_LCD;	delay_5ms(); CS_OFF;}
+#define K_LCD		{RSLCD_PORT &= ~(1<<RSLCD_PIN);}// RSLCD
+#define D_LCD		{RSLCD_PORT |=  (1<<RSLCD_PIN);}// RSLCD
+
+//=============
 
 #define DC_OZU_DDR  DDRD
 #define DC_OZU_PORT PORTD
 #define DC_OZU_BIT  5
 
-#define REG574 (*(volatile unsigned char*)0x4000)
+#define REG574 (*(unsigned char*)0x4000)
 #define SHDN_BIT  3
 
-#define I82c54_CMD (*(volatile unsigned char*)0x3003)
-#define I82c54_DAT (*(volatile unsigned char*)0x3000)
+#define I82c54_CMD (*(unsigned char*)0x3003)
+#define I82c54_DAT (*(unsigned char*)0x3000)
 
-#define I82c54_WD_CLR	10000UL
+#define I82c54_WD_CLR	10000U
 
-#define MC146818_REG_A (*(volatile unsigned char*)0x200A)
-#define MC146818_REG_B (*(volatile unsigned char*)0x200B)
+#define MC146818_REG_A (*(unsigned char*)0x200A)
+#define MC146818_REG_B (*(unsigned char*)0x200B)
 
 //#define MC146818_REG_A_VALUE   0x24
 #define MC146818_REG_A_VALUE   0x21 // 32768 - 32768
@@ -266,28 +340,48 @@ static inline void key_load(void);
 #define MC146818_REG_B_MASK   0x04  // SQWE only
 
 
-static void FLOUTEK_WatchDog(void){
-    DC_OZU_PORT|= 1<<DC_OZU_BIT;//ddr for reg_in_use
-      /* инициализация счетчика 0 ВИ54 для работы сторожа */
-	I82c54_CMD = 0x30;  /* 00110000 - регистр управления ВИ54 */
-	I82c54_DAT = (unsigned char)I82c54_WD_CLR;    //Lo
-	I82c54_DAT = (unsigned char)(I82c54_WD_CLR>>8); //Hi
-    REG574 = (1<<SHDN_BIT);//ADM242 Tx_On
+static inline void FLOUTEK_WatchDog(void){
+//	DC_OZU_DDR |= 1<<DC_OZU_BIT;
+	/* инициализация счетчика 0 TL54 для работv сторожа */
+//	I82c54_CMD = 0x30;  /* 00110000 - регистр управления TL54 */
+//	I82c54_DAT = (unsigned char)I82c54_WD_CLR;    //Lo
+//	I82c54_DAT = I82c54_WD_CLR>>8; //Hi
+//	REG574 = (1<<SHDN_BIT);//ADM242 Tx_On
+	__asm__ __volatile__ ("wdr");
 }
 
-//static 
-void LCD_Init(void);
-const char str1[]="STK500_2";
-static void LCD_Send(const char * msg);
+
+//#define BREAK_COUNTS 61440
+//100ms
+#define BREAK_COUNTS (0.1*F_CPU/6)
+
 int main(void)
 {
 	unsigned char rx_data;  // received USART data byte
 	unsigned char state = STATE_READY;  // actual state
+	unsigned int break_cycles_counter;
  
-	initPorts();
-	if((PROG_IN & (1<<PROG_PIN))){
-	  app_start();
+	init_ports();
+//	if((PROG_IN & (1<<PROG_PIN))||(DSR_IN & (1<<DSR_PIN))){
+//	  app_start();
+//	}
+
+	if(DSR_IN & (1<<DSR_PIN)){
+		app_start();
+	}else{
+		for(break_cycles_counter=BREAK_COUNTS;(break_cycles_counter>0)&&(!(PROG_IN & (1<<PROG_PIN)));break_cycles_counter--);
+		if(break_cycles_counter)app_start();
 	}
+
+//	init_ports();
+
+	init_spi();		// настройка SPI
+	CS_OFF;
+	init_gki();
+
+	//for(;;){SPI_Transmit(0x55);CS_LCD;delay_5ms();CS_OFF;delay_5ms();};
+	CS_OFF;
+	vyv_str(str1,6);
 
 #if defined(BOOTUART_SET_ATmega128_UART0_ONLY)
 #else	
@@ -295,6 +389,7 @@ int main(void)
 #endif //BOOTUART_SET_ATmega128_UART0_ONLY
 	initUart();
 
+/*
 	//FLOUTEK board!!!!
 	MCUCR = (1 << SRE) | (1 << SRW10);
     XMCRA = (1 << SRW01) | (1 << SRW00) | (1<< SRW11);
@@ -311,15 +406,12 @@ int main(void)
     rx_data = 0;
 
 
+*/
     FLOUTEK_WatchDog();
-
-	LCD_Init();
-    LCD_Send(str1);
 	//=====	  
-	
+
 	key_load();
-
-
+	vyv_str((char *)key_record.desc_str,0x46);
 
 	for(;;)
 	{
@@ -458,10 +550,10 @@ void handleMessage(void) {
         	case CMD_READ_FUSE_ISP:
         	case CMD_READ_LOCK_ISP:        	
         		cmdReadFuseLockIsp();
-        		break;         		        		  			
-        	default:
-				cmdError();
-				break;	
+        		break;
+		default:
+			cmdError();
+			break;
         }
         
         sendResponse();
@@ -477,19 +569,12 @@ void handleMessage(void) {
 */        
        	
 } // end handleMessage
-
-static inline void cmdError(void)  {
-	msg_size = 2;  			// set message length		
-	*(tx_pntr++) = *rx_pntr;
-	*(tx_pntr++) = STATUS_CMD_FAILED;
-} 
-
  
 
 /*----------------------------------------------------------------------------*/ 
 /* send response message                                                      */
 /*----------------------------------------------------------------------------*/
-static void sendResponse(void) {
+static inline void sendResponse(void) {
 	unsigned int msg_len, idx;
 
     size_pntr[0] = (unsigned char) (msg_size >> 8);
@@ -500,8 +585,7 @@ static void sendResponse(void) {
 	for( idx = 0; idx < msg_len; idx++ )  {
 		putch( tx_buffer[idx] );
 		msg_cs ^= tx_buffer[idx];		
-	}
-
+	}	
 	putch(msg_cs);	
 	msg_cs = 0x00;  // reset checksum
 }
@@ -511,12 +595,14 @@ static void sendResponse(void) {
 /*----------------------------------------------------------------------------*/ 
  
 static inline void cmdSignOn(void)  {
-
+//int i;
+char *x=(char *)str1;
 	msg_size = 11;  		// set message length
 	*(tx_pntr++) = CMD_SIGN_ON;
 	*(tx_pntr++) = STATUS_CMD_OK;
 	
 	*(tx_pntr++) = 0x08;  	// send signature length
+/*
 	*(tx_pntr++) = 'S';		// send identifier
 	*(tx_pntr++) = 'T';
 	*(tx_pntr++) = 'K';
@@ -525,7 +611,11 @@ static inline void cmdSignOn(void)  {
 	*(tx_pntr++) = '0';
 	*(tx_pntr++) = '_';
 	*(tx_pntr++) = '2';
-	
+*/
+//const char str1[]="STK500_2";
+//	for(i = 0; i < 8; i++) *(tx_pntr++) = str1[i];
+	for(; *x; *(tx_pntr++) = *(x++));
+
 } 
  
 /*----------------------------------------------------------------------------*/ 
@@ -631,48 +721,41 @@ static inline void cmdGetParameter(void)  {
 	*(tx_pntr++) = STATUS_CMD_OK;
 
 	switch( *(rx_pntr+1) )  {
-		default: 	
-            *(tx_pntr++) = 0x00; // send dummy value for not supported parameters   
-        return; //break;
 		case PARAM_HW_VER: 
             *(tx_pntr++) = HARDWARE_VERSION;  // send hardware version          				
-			return; //break;
+			break;
 		case PARAM_SW_MAJOR: 
-            *(tx_pntr++) = SOFTWARE_MAJOR; // send software major version         				
-			return; //break;
+//            *(tx_pntr++) = SOFTWARE_MAJOR; // send software major version
+	        *(tx_pntr++) = key_record.major; // send software major version         				
+			break;
 		case PARAM_SW_MINOR: 
-            *(tx_pntr++) = SOFTWARE_MINOR;  // send software minor version          				
-			return; //break;			
+//            *(tx_pntr++) = SOFTWARE_MINOR;  // send software minor version          				
+            *(tx_pntr++) = key_record.minor;  // send software minor version          				
+			break;			
 		case PARAM_VTARGET: 
             *(tx_pntr++) = VTARGET; // target supply voltage         				
-			return; //break;        			
+			break;        			
 		case PARAM_VADJUST: 
             *(tx_pntr++) = VADJUST; // target VREF voltage          				
-			return; //break;  
+			break;  
 		case PARAM_OSC_PSCALE: 
             *(tx_pntr++) = PSCALE_FSYS; // oscilator prescaler value         				
-			return; //break;
+			break;
 		case PARAM_OSC_CMATCH: 
             *(tx_pntr++) = CMATCH_DEF; // oscilator compare value         				
-			return; //break;			
+			break;			
 		case PARAM_SCK_DURATION: 
             *(tx_pntr++) = SCK_DURATION_DEF; // oscilator compare value         				
-        	return; //break;
+        			break;        			       			        			        			
 #if defined(__AVR_ATmega128__) || defined(__AVR_AT90CAN128__)
 		case PARAM_TOPCARD_DETECT: 
             *(tx_pntr++) =  STK501; // STK501 is expected          				
-			return; //break;
-#endif 
-/*@Vit       			
+			break;		
+#endif        			
 		default: 	
             *(tx_pntr++) = 0x00; // send dummy value for not supported parameters   
-        return; //break;
-*/
-	}
-
-	
-	
-				
+        break;      			
+	}			
 } 
 /*----------------------------------------------------------------------------*/ 
 /* execute command  CMD_PROGRAM_FLASH_ISP                                     */
@@ -817,7 +900,6 @@ static inline void cmdReadFuseLockIsp(void)  {
 	*(tx_pntr++) = STATUS_CMD_OK;
 	
 	command = *(rx_pntr+2) * 256 + *(rx_pntr+3);
-
 	switch( command ) {
 		case 0x5800: address = 0x0001; break; // lock bits		
 		case 0x5000: address = 0x0000; break; // fuse low	
@@ -827,36 +909,46 @@ static inline void cmdReadFuseLockIsp(void)  {
 	}
 	
 	*(tx_pntr++) = readBits(address);	 
+
     *(tx_pntr++) = STATUS_CMD_OK;	
 	
 }   
  
+static inline void cmdError(void)  {
+	msg_size = 2;  			// set message length		
+	*(tx_pntr++) = *rx_pntr;
+	*(tx_pntr++) = STATUS_CMD_FAILED;
+} 
+
+
 /*----------------------------------------------------------------------------*/ 
 /* set pin direction for bootloader pin and enable pullup                     */
 /*----------------------------------------------------------------------------*/
-static void initPorts(void)  {
-#ifdef NAFIG_080922
-#if defined(__AVR_ATmega128__) || defined(__AVR_AT90CAN128__)
-  	BL_DDR &= ~(1 << BL0);
-  	BL_DDR &= ~(1 << BL1);
-  	BL_PORT |= (1 << BL0);
-  	BL_PORT |= (1 << BL1);
-  	
-#else
-	BL_DDR &= ~(1 << BL);
-	BL_PORT |= (1 << BL);
-#endif
+static inline void init_ports(void)  {
+	// настройка портов ================================ 1 - выход, 0 - вход
+/**/
+/*
+	DDRA  = 0x0F;	
+	DDRB  = 0x77;	
+	DDRC  = 0xFF;	
+	DDRD  = 0x0B;	
+	DDRE  = 0x06;	
+	DDRF  = 0x00;	
+*/	
+	// настройка портов ============ если на вход, тогда 1 - с подтяжкой, 0 - без подтяжки
+//	PORTA = 0xF0;
+//	PORTD = 0xF3;
+/**/
 
-#ifdef MONITOR
-
-#endif
-#endif // NAFIG_080922
+	//DDRC  = 0xFF;	
+	RSLCD_DDR |= (1<<RSLCD_PIN);
+	ENLCD_DDR |= (1<<ENLCD_PIN);
 } 
  
 /*----------------------------------------------------------------------------*/ 
 /* initialize UART(s) depending on CPU defined                                */
 /*----------------------------------------------------------------------------*/ 
-static void initUart(void)  {
+static inline void initUart(void)  {
 #if defined(BOOTUART_SET_ATmega128_UART0_ONLY)
   UBRR0L = (uint8_t)(F_CPU/(BAUD_RATE*16L)-1);
   UBRR0H = (F_CPU/(BAUD_RATE*16L)-1) >> 8;
@@ -899,7 +991,8 @@ static void initUart(void)  {
 /*----------------------------------------------------------------------------*/
 /* check if flash is programmed already, if not start bootloader anyway       */
 /*----------------------------------------------------------------------------*/
-static inline void bootCheck(void)  {
+#ifdef _NEED_BOOT_CHECK
+static void bootCheck(void)  {
 #ifdef NAFIG_080917_Vit
 	if(pgm_read_byte_near(0x0000) != 0xFF) {
 
@@ -937,12 +1030,7 @@ static inline void bootCheck(void)  {
 #else
 #ifdef __AVR_ATmega128__
   /* if no UART is being selected, default is RS232 */
-  /* @Vit
   if((bootuart0 == 0) && (bootuart1 == 0)) {
-    bootuart0 = 1;
-  }
-  */
-  if(bootuart1 == 0) {
     bootuart0 = 1;
   }
 #elif defined __AVR_AT90CAN128__
@@ -953,6 +1041,7 @@ static inline void bootCheck(void)  {
 #endif
 #endif	//BOOTUART_SET_ATmega128_UART0_ONLY
 } // end of bootCheck 
+#endif
  
 static void putch(char ch)
 {
@@ -1005,14 +1094,9 @@ static char getch(void)
    tmp = UDR ;
 #endif
 #endif //BOOTUART_SET_ATmega128_UART0_ONLY
-/* @Vit 090908*/
-#ifdef MONITOR
   if( echo ) {
      putch( tmp ); 
-  } 
-#endif
-
-    
+  }     
   return( tmp );
 
 }  // end of getch
@@ -1031,7 +1115,7 @@ EECR |= (1<<EEMWE);
 EECR |= (1<<EEWE);
 }
 
-static unsigned char eeprom_rb(unsigned int uiAddress)
+unsigned char eeprom_rb(unsigned int uiAddress)
 {
 /* Wait for completion of previous write */
 while(EECR & (1<<EEWE))
@@ -1045,8 +1129,9 @@ return EEDR;
 } 
 
 /* read lock/fuse bits */
-static unsigned char readBits( unsigned int address ) {	
-#ifdef NAFIG_090908_Vit
+static inline unsigned char readBits( unsigned int address ) {	
+/*
+unsigned char dummy;
 	asm volatile(
 				"mov	r31,r25 \n\t"	
 		       	"mov	r30,r24 \n\t"	
@@ -1055,13 +1140,16 @@ static unsigned char readBits( unsigned int address ) {
 				"sts	%0,r24 \n\t"									
 		       	"lpm	\n\t" 
 		       	"mov	r24,r0  \n\t" 
-		       	: "=m" (SPMCSR)
-				);     
-#else
-    return 0;
-#endif // NAFIG_090908_Vit
-				
+		       	: "=m" (SPMCSR) 
+				, "=r" (dummy)
+				: "r" (address)
+				: "r30","r31","r24","r25"
+				);
+	return dummy;
+*/
+return 0;
 }
+
 
 #ifdef MONITOR
 
@@ -1288,15 +1376,6 @@ void print_P( uint32_t address ) {
 }
 
 
-uint8_t htoi( uint8_t val ) {
-	if( val >= '0' && val <= '9' ) {
-		return (val - '0');
-	}
-	else {
-	    return ( toupper( val ) - 'A' + 10 );
-	}
-}
-
 char *getValue( char *src,  uint32_t *value, uint8_t len )  {
 	char buf[10];
 	
@@ -1319,20 +1398,25 @@ char *getValue( char *src,  uint32_t *value, uint8_t len )  {
 }
 
 
-
+uint8_t htoi( uint8_t val ) {
+	if( val >= '0' && val <= '9' ) {
+		return (val - '0');
+	}
+	else {
+	    return ( toupper( val ) - 'A' + 10 );
+	}
+}
 
 
 
 
 #endif
-//const unsigned long DELTA = 0x9E3779B9;
-//enum { DELTA = 0x9E3779B9};
-#define DELTA 0x9E3779B9
+const unsigned long DELTA = 0x9E3779B9;
 #define NUMROUNDS  32ul;
 //#define NUMROUNDS  4ul;
 //const unsigned long key[4]={1,2,3,4};
 /*
-void XTEA_encode(unsigned long* data, unsigned char dataLength)
+static void XTEA_encode(unsigned long* data, unsigned char dataLength)
 {
 	unsigned long x1;
 	unsigned long x2;
@@ -1380,9 +1464,9 @@ static void XTEA_encode_special_(unsigned long* data, unsigned char dataLength)
 
 		while(iterationCount > 0)
 		{
-			x1 += ((x2<<4 ^ x2>>5) + x2) ^ (sum + *(key+(sum&0x03)));
+			x1 += ((x2<<4 ^ x2>>5) + x2) ^ (sum + *(key_record.key+(sum&0x03)));
 			sum+=DELTA;
-			x2 += ((x1<<4 ^ x1>>5) + x1) ^ (sum + *(key+(sum>>11&0x03)));
+			x2 += ((x1<<4 ^ x1>>5) + x1) ^ (sum + *(key_record.key+(sum>>11&0x03)));
 
 			iterationCount--;
 		}
@@ -1393,7 +1477,7 @@ static void XTEA_encode_special_(unsigned long* data, unsigned char dataLength)
 }
 
 /*
-void XTEA_decode(unsigned long* data, unsigned char dataLength) 
+static void XTEA_decode(unsigned long* data, unsigned char dataLength) 
 {
 	unsigned long x1;
 	unsigned long x2;
@@ -1434,9 +1518,9 @@ static void XTEA_decode_special(unsigned long* data, unsigned char dataLength){
 
 		while(sum != 0)
 		{
-			x2 -= ((x1<<4 ^ x1>>5) + x1) ^ (sum + *(key+(sum>>11&0x03)));
+			x2 -= ((x1<<4 ^ x1>>5) + x1) ^ (sum + *(key_record.key+(sum>>11&0x03)));
 			sum-=DELTA;
-			x1 -= ((x2<<4 ^ x2>>5) + x2) ^ (sum + *(key+(sum&0x03)));
+			x1 -= ((x2<<4 ^ x2>>5) + x2) ^ (sum + *(key_record.key+(sum&0x03)));
 		}
 		*data++ =x1;
 		*data++ =x2;
@@ -1444,6 +1528,7 @@ static void XTEA_decode_special(unsigned long* data, unsigned char dataLength){
 	}
 }
 /**/
+/*
 static inline void key_load(void){
   unsigned char zzz = 16;
   unsigned char tmp = 0xFF;
@@ -1462,53 +1547,118 @@ static inline void key_load(void){
     ;
   }
 }
-
-
-#define DELAY_5ms()  _delay_loop_2(4609*2) //4609 for XTAL 3.6864 - FLOUTEK has XTAL (3.6864*2)MHz
-#define DELAY_50ms() do{_delay_loop_2(46090UL);_delay_loop_2(46090UL);}while(0) 
-
-#define LCD_ADDR_C (*(volatile unsigned char*)0x8000)
-#define LCD_ADDR_D (*(volatile unsigned char*)0x8001)
-#define LCD_CMD_WR(X)  do{                                  \
-                         /*DC_OZU_PORT|= 1<<DC_OZU_BIT;*/   \
-                         LCD_ADDR_C = (X);                  \
-						 /*DC_OZU_PORT$= ~(1<<DC_OZU_BIT);*/\
-                       }while(0)
-#define LCD_DATA_WR(X) do{                                  \
-                         /*DC_OZU_PORT|= 1<<DC_OZU_BIT;*/   \
-                         LCD_ADDR_D = (X);                  \
-						 /*DC_OZU_PORT$= ~(1<<DC_OZU_BIT);*/\
-                       }while(0)
-
-#define LCD_FIRST_LINE_FIRST_FIELD 0x80
-void LCD_Init(void)
-{
-  //DC_OZU_PORT|= 1<<DC_OZU_BIT;//ddr for reg_in_use
-  DELAY_50ms();
-  LCD_CMD_WR(0x38);
-  DELAY_5ms();
-  LCD_CMD_WR(0x38);
-  DELAY_5ms();
-  LCD_CMD_WR(0x38); // 8-bit, 2-line, 5-10
-  DELAY_5ms();
-  LCD_CMD_WR(0x0C); // Display ON, Coursor OFF, Blink OFF 
-  DELAY_5ms();
-  LCD_CMD_WR(0x01); // Display CLEAR;
-  DELAY_5ms();
-  LCD_CMD_WR(0x06); // Autoincrement, Shift
-  DELAY_5ms();
-  LCD_CMD_WR(0x80); // set position to first field of first line (??)
-  DELAY_5ms();
+*/
+static inline void key_load(void){
+  unsigned char *key_p = (unsigned char *)(&key_record);
+  unsigned char tmp = 0xFF;
+  unsigned char zzz = sizeof(key_record);
+ 
+  uint32_t address_flash = XTEA_KEY_ADDRESS;
+  do{   
+    (*key_p) = pgm_read_byte_far(address_flash++);
+    tmp&=(*key_p++);
+  }while(--zzz);
+  if(tmp==0xFF){
+	memcpy(&key_record,&key_record_default,sizeof(key_record));
+  }
 }
 
-static void LCD_Send(const char * msg)
+void vyv_str(const char strok[], char pos)
 {
-  //LCD_CMD_WR(LCD_FIRST_LINE_FIRST_FIELD);
-  LCD_CMD_WR(0x85);
-  DELAY_50ms();
-  //i = 0; 
-  while(*msg){
-    LCD_DATA_WR(*(msg++));
-    DELAY_5ms();		
-  };
+ int i;
+ char wr_k;
+// char *ii;
+	wr_k = 0x80+pos;
+	K_LCD;
+	SPI_Transmit(wr_k); LATCH_LCD;
+	delay_50ms();
+	D_LCD;
+	
+/*
+	for(ii=strok;wr_k=*ii;ii++){
+		SPI_Transmit(wr_k); LATCH_LCD;
+		delay_50ms();
+	}
+*/
+
+	for(i = 0; i < 8; i++) {
+		wr_k = strok[i];
+		SPI_Transmit(wr_k); LATCH_LCD;
+		delay_5ms();
+	}
 }
+
+static void init_gki(void)
+{
+	K_LCD;	
+	delay_50ms();
+//*****
+	SPI_Transmit(0x38); LATCH_LCD;		// 8 бит, 2 линии, 5-10
+	delay_5ms();
+	SPI_Transmit(0x38); LATCH_LCD;		// 8 бит, 2 линии, 5-10
+	delay_5ms();
+//*****
+	SPI_Transmit(0x38); LATCH_LCD;		// 8 бит, 2 линии, 5-10
+	delay_5ms();
+	SPI_Transmit(0x0C); LATCH_LCD;		// вкл.дисплей, выкл.курсор, выкл.блик 
+	delay_5ms();
+	SPI_Transmit(0x06); LATCH_LCD;		// автоинкремент, сдвиг куда_то 
+	delay_5ms();
+	SPI_Transmit(1); LATCH_LCD;			// сброс дисплея 
+	delay_5ms();
+	SPI_Transmit(80); LATCH_LCD;
+	delay_5ms();
+}
+
+static void init_spi( void)	// Настройка SPI
+{
+	/* Set MOSI and SCK output, all others input */
+//	DDR_SPI |= (1<<DD_MOSI)|(1<<DD_SCK);
+	DDRB |= (1<<PINB2)|(1<<PINB1)|(1<<PINB0);
+	PORTB &=~(1<<PINB0);
+//	DDRB  = 0x77;
+
+    //SPCR = 0; //SPCR &= ~(1<<SPE); //выключить SPI
+
+	//SPSR = 0x00;	// сбросить флаги, нет удвоения скорости
+	//SPCR = 0x50;	// разрешить SPI, старшим байтом вперед, режим мастера
+					// 1/128 частоты процессора (0x50 = 1/4  частоты процессора)
+	SPCR = (1<<SPE)|(1<<MSTR)|(1<<CPHA)|(1<<CPOL)|(1<<SPR0);
+}
+
+static void SPI_Transmit(unsigned char data)
+{
+//	do{
+	    SPDR = data; 
+//	}while( SPSR & (1<<WCOL));	// контроль занятости
+
+	while( !(SPSR & (1<<SPIF)));	// контроль окончания передачи
+/*
+	{
+		CS_LCD;
+		CS_OFF;
+
+	}
+*/
+//	while( !(SPSR & 0x80));	// контроль окончания передачи
+}
+
+
+/*
+void waitl(unsigned long a)		// для Мегаса 1000 = 3.7 мс
+{
+	while(a--);
+}
+*/
+
+/**/
+static inline void x_delay_loop_2(uint16_t __count)
+{
+	__asm__ volatile(
+		"1: sbiw %0,1" "\n\t"
+		"brne 1b"
+		: "=w" (__count)
+		: "0" (__count)
+	);
+}
+/**/
