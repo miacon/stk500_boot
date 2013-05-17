@@ -1,11 +1,11 @@
 ###############################################################################
-# Makefile for the project stk500_2_boot
+# Makefile for the project memex_vr1_bl
 ###############################################################################
 
 ## General Flags
-PROJECT = stk500_2_boot
+PROJECT = memex_vr1_bl
 MCU = atmega128
-TARGET = stk500_2_boot.elf
+TARGET = memex_vr1_bl.elf
 CC = avr-gcc.exe
 
 ## Options common to compile, link and assembly rules
@@ -13,7 +13,7 @@ COMMON = -mmcu=$(MCU)
 
 ## Compile options common for all C compilation units.
 CFLAGS = $(COMMON)
-CFLAGS += -Wall -mno-interrupts -Wstrict-prototypes -gstabs -Os -funsigned-char -funsigned-bitfields  -DF_CPU=3686400UL
+CFLAGS += -Wall -mno-interrupts -Wstrict-prototypes -gstabs -std=gnu99 -DF_CPU=7372800UL -Os -funsigned-char -funsigned-bitfields -fpack-struct  -fshort-enums
 CFLAGS += -MD -MP -MT $(*F).o -MF dep/$(@F).d 
 
 ## Assembly specific flags
@@ -23,7 +23,7 @@ ASMFLAGS += -x assembler-with-cpp -Wa,-gdwarf2
 
 ## Linker flags
 LDFLAGS = $(COMMON)
-LDFLAGS += -Wl,--section-start=.text=0x1F000 -Wl,-Map=stk500_2_boot.map
+LDFLAGS += -Wl,--section-start=.text=0x1f000 -Wl,-Map=memex_vr1_bl.map
 
 
 ## Intel Hex file production flags
@@ -41,7 +41,7 @@ OBJECTS = stk500_2_boot.o
 LINKONLYOBJECTS = 
 
 ## Build
-all: $(TARGET) stk500_2_boot.hex stk500_2_boot.eep stk500_2_boot.lss size
+all: $(TARGET) memex_vr1_bl.hex memex_vr1_bl.eep memex_vr1_bl.lss size
 
 ## Compile
 stk500_2_boot.o: ../stk500_2_boot.c
@@ -67,7 +67,7 @@ size: ${TARGET}
 ## Clean target
 .PHONY: clean
 clean:
-	-rm -rf $(OBJECTS) stk500_2_boot.elf dep/* stk500_2_boot.hex stk500_2_boot.eep stk500_2_boot.lss stk500_2_boot.map
+	-rm -rf $(OBJECTS) memex_vr1_bl.elf dep/* memex_vr1_bl.hex memex_vr1_bl.eep memex_vr1_bl.lss memex_vr1_bl.map
 
 
 ## Other dependencies
