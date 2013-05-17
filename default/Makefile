@@ -13,7 +13,7 @@ COMMON = -mmcu=$(MCU)
 
 ## Compile options common for all C compilation units.
 CFLAGS = $(COMMON)
-CFLAGS += -Wall -mno-interrupts -Wstrict-prototypes  -gstabs                                -DF_CPU=7372800UL -Os -funsigned-char -funsigned-bitfields
+CFLAGS += -Wall -mno-interrupts -Wstrict-prototypes -gstabs -Os -funsigned-char -funsigned-bitfields  -DF_CPU=3686400UL
 CFLAGS += -MD -MP -MT $(*F).o -MF dep/$(@F).d 
 
 ## Assembly specific flags
@@ -23,7 +23,7 @@ ASMFLAGS += -x assembler-with-cpp -Wa,-gdwarf2
 
 ## Linker flags
 LDFLAGS = $(COMMON)
-LDFLAGS += -nostartfiles  -Wl,--section-start=.text=0x1F000 -Wl,-Map=stk500_2_boot.map
+LDFLAGS += -Wl,--section-start=.text=0x1F000 -Wl,-Map=stk500_2_boot.map
 
 
 ## Intel Hex file production flags
@@ -33,9 +33,6 @@ HEX_EEPROM_FLAGS = -j .eeprom
 HEX_EEPROM_FLAGS += --set-section-flags=.eeprom="alloc,load"
 HEX_EEPROM_FLAGS += --change-section-lma .eeprom=0 --no-change-warnings
 
-
-## Include Directories
-INCLUDES = -I"C:\WinAVR-20080512\avr\include\avr" 
 
 ## Objects that must be built in order to link
 OBJECTS = stk500_2_boot.o 
