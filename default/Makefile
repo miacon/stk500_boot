@@ -23,7 +23,7 @@ ASMFLAGS += -x assembler-with-cpp -Wa,-gdwarf2
 
 ## Linker flags
 LDFLAGS = $(COMMON)
-LDFLAGS +=  -Wl,--section-start=.text=0x1E000  -Wl,-Map=memex_vr1_bl.map
+LDFLAGS += -Wl,--section-start=.text=0x1E000 -Wl,-Map=memex_vr1_bl.map
 
 
 ## Intel Hex file production flags
